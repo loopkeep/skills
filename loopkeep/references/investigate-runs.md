@@ -58,6 +58,10 @@ Event types you will see, in the order a healthy run produces them:
   checkpoint branches remain — inspect with normal git (`git log`, `git show`).
 - **Why did it die?** `run.state_changed` with the failing `reason`, plus the last
   events before the terminal one.
+- **Nothing in `events.db` explains it?** Daemon-level failures — a run that never
+  produced events, adapter spawn errors, Console connection problems — go to the
+  daemon's diagnostic log, not the event log: `~/.local/state/loopkeep/loopkeepd.log`
+  (honors `XDG_STATE_HOME`; rotated at 5 MB with one `.old` generation).
 
 ## 4. Acting on findings
 

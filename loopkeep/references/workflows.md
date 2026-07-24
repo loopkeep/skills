@@ -12,14 +12,15 @@ on:
   schedule:
     - cron: "0 9 * * *"      # minute granularity
 engine:
-  id: claude                 # or `api` with an explicit model id
+  id: claude                 # loopkeep runs only the claude engine; any other id fails the run at start
   model: haiku
-x-loopkeep.budget:
-  daily_runs: 3
-  daily_tokens: 200000
-x-loopkeep.concurrency:
-  max: 1
-  on_limit: skip             # don't pile up behind a slow previous run
+x-loopkeep:                  # loopkeep-specific settings all nest here; root keys must stay gh-aw compatible
+  budget:
+    daily_runs: 3
+    daily_tokens: 200000
+  concurrency:
+    max: 1
+    on_limit: skip           # don't pile up behind a slow previous run
 safe-outputs:                # the only side-channels the run may use to publish
   add-labels: {}
   add-comment: {}
