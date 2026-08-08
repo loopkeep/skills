@@ -381,6 +381,7 @@ Held runs show up as state `queued` and take no concurrency slot.
 x-loopkeep:
   mux:
     driver: tmux # herdr | tmux | zellij | cmux
+    session: work # named multiplexer session to open the pane in
     space: loopkeep # multiplexer session/workspace to place the pane in
     tab: automation # tab/window within it
 ```
@@ -388,6 +389,11 @@ x-loopkeep:
 A bare `mux: tmux` is the driver alone. Each key falls back on its own to this
 project's `.loopkeep/config.yaml`, then the personal `config.yaml`, then the built-in
 `loopkeep` / `automation`. The pane is named after the run id.
+
+`session` has no built-in default: leave it out and the pane opens in the session you
+are already using — the only running one, or the most recently used of several. A
+session you name is started if it isn't running yet, rather than the run quietly
+landing somewhere else. Only herdr has named sessions; the other drivers ignore it.
 
 ## The body
 
