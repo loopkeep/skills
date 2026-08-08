@@ -21,6 +21,7 @@ x-loopkeep:                  # loopkeep-specific settings all nest here; root ke
   concurrency:
     max: 1
     on_limit: skip           # don't pile up behind a slow previous run
+  execution_mode: auto       # auto (default): manual runs go attended in a terminal pane, unattended firings stay headless
 safe-outputs:                # the only side-channels the run may use to publish
   add-labels: {}
   add-comment: {}
@@ -30,17 +31,28 @@ safe-outputs:                # the only side-channels the run may use to publish
 Prompt body, with interpolations — see the next section.
 ```
 
+`execution_mode` picks where the agent runs: `auto` (default), `headless`, or
+`attended` (a terminal multiplexer pane you can watch and steer). When you declare
+`attended` and no terminal is available, loopkeep does not silently fall back — it
+holds the run and asks in your inbox (run headless now / wait for a terminal / cancel).
+Set the object form `execution_mode: { mode: attended, on_no_host: headless }` to keep
+the old silent fallback instead.
+
 Study the shipped examples before writing from scratch — `workflows/examples/` in the
 loopkeep repository, or existing files in this workspace's `.loopkeep/workflows/`.
 
 ## Interpolations (`{{ … }}` in the body)
 
-Exactly three token kinds are expanded; any other `{{ … }}` is left untouched.
+These token kinds are expanded; any other `{{ … }}` is left untouched.
 
-- `{{ trigger }}` — replaced with the trigger context (event payload, schedule id).
-  It is a **placement marker, not an opt-in**: if the body has no `{{ trigger }}`,
-  the trigger context is prepended to the top of the prompt anyway. Write it only to
-  control where the context lands.
+- `{{ trigger }}` — replaced with the whole trigger context (event payload, schedule id).
+  It is an **opt-in**: a body with no trigger token gets no context at all, so the run
+  has no idea what started it. The editor warns when a triggered workflow leaves it out.
+- `{{ trigger.<path> }}` — replaced with one value from that context, addressed with
+  dots (`{{ trigger.event.branch }}`, `{{ trigger.output.severity }}`); a numeric
+  segment indexes an array. Strings land as themselves, objects and arrays as JSON,
+  and a path the context does not have lands as an empty string. Run
+  `lk trigger explain <workflow>` to see which paths this workflow's triggers carry.
 - `{{ call:<canonical-tool> }}` — reference a tool by canonical name. It expands to a
   short inline instruction (`call <tool>`), and for the three built-in loopkeep tools
   a usage snippet is appended to the end of the prompt once per tool:
@@ -75,5 +87,10 @@ Exactly three token kinds are expanded; any other `{{ … }}` is left untouched.
   are cut off by chain depth and budgets. If a chain "mysteriously" stops, check
   budgets before suspecting the trigger.
 - GitHub Agentic Workflows interop: `lk export --to-gh-aw <workflow> [--json]` reports compatibility as
-  green/yellow/red; `lk import <gh-aw-file>` converts, and triggers it cannot run
-  become `manual` instead of failing.
+  green/yellow/red. `lk import <gh-aw-file>` writes the file into the workspace as
+  `.loopkeep/workflows/<name>.md`, named after the source file unless `--name <name>`
+  says otherwise, and adds a `manual` trigger so it can always be started by hand. The
+  file's own triggers are kept as written — a trigger that doesn't fire locally is not
+  swapped for `manual`. An existing workflow is an error rather than a silent overwrite;
+  pass `--force` to replace it. It prints the path it wrote, any warnings, and the
+  resulting `on:`.
