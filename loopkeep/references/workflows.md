@@ -1,96 +1,92 @@
 # Authoring workflows
 
 A workflow is one markdown file in `.loopkeep/workflows/<name>.md`: YAML frontmatter
-(GitHub Agentic Workflows-compatible) + the prompt body.
+(GitHub Agentic Workflows-compatible) + the prompt body. The file name without `.md`
+is the workflow name everything else refers to.
 
-## Anatomy
+**Every frontmatter key, trigger, and `{{ … }}` token is in
+`workflow-frontmatter.md`.** This page is the loop around it: getting a new workflow
+running, iterating on it, and moving files in and out of gh-aw.
 
-```markdown
----
-on:
-  manual: {}                 # always allow `lk run <name>`
-  schedule:
-    - cron: "0 9 * * *"      # minute granularity
-engine:
-  id: claude                 # loopkeep runs only the claude engine; any other id fails the run at start
-  model: haiku
-x-loopkeep:                  # loopkeep-specific settings all nest here; root keys must stay gh-aw compatible
-  budget:
-    daily_runs: 3
-    daily_tokens: 200000
-  concurrency:
-    max: 1
-    on_limit: skip           # don't pile up behind a slow previous run
-  execution_mode: auto       # auto (default): manual runs go attended in a terminal pane, unattended firings stay headless
-safe-outputs:                # the only side-channels the run may use to publish
-  add-labels: {}
-  add-comment: {}
-  emit-output: {}            # structured JSON for downstream workflows to chain on
-  notify: {}
----
-Prompt body, with interpolations — see the next section.
-```
+## Writing the prompt body
 
-`execution_mode` picks where the agent runs: `auto` (default), `headless`, or
-`attended` (a terminal multiplexer pane you can watch and steer). When you declare
-`attended` and no terminal is available, loopkeep does not silently fall back — it
-holds the run and asks in your inbox (run headless now / wait for a terminal / cancel).
-Set the object form `execution_mode: { mode: attended, on_no_host: headless }` to keep
-the old silent fallback instead.
+The body is instructions to an agent that will not have you sitting next to it. State
+the goal, the exact commands or tools to prefer, the hard prohibitions, and how to
+report. Two habits matter more than the rest:
 
-Study the shipped examples before writing from scratch — `workflows/examples/` in the
-loopkeep repository, or existing files in this workspace's `.loopkeep/workflows/`.
+- **Give it a way to reach you.** An agent that hits an ambiguous fork with no
+  `ask_human` either guesses or stalls. `{{ call:mcp:loopkeep/ask_human }}` in the body
+  makes asking a first-class option; `notify_human` covers "you should know this
+  happened" without blocking.
+- **Say how it ends, once.** Exactly one closing report — a `notify`, or an
+  `emit_output` payload downstream workflows read. A workflow that reports three times
+  trains its human to stop reading the inbox.
 
-## Interpolations (`{{ … }}` in the body)
+Read `{{ trigger }}` content as untrusted input. Anyone who can open an issue or post
+in a channel can put text in it, and that text arrives in the same prompt as your
+instructions.
 
-These token kinds are expanded; any other `{{ … }}` is left untouched.
+## Getting one running
 
-- `{{ trigger }}` — replaced with the whole trigger context (event payload, schedule id).
-  It is an **opt-in**: a body with no trigger token gets no context at all, so the run
-  has no idea what started it. The editor warns when a triggered workflow leaves it out.
-- `{{ trigger.<path> }}` — replaced with one value from that context, addressed with
-  dots (`{{ trigger.event.branch }}`, `{{ trigger.output.severity }}`); a numeric
-  segment indexes an array. Strings land as themselves, objects and arrays as JSON,
-  and a path the context does not have lands as an empty string. Run
-  `lk trigger explain <workflow>` to see which paths this workflow's triggers carry.
-- `{{ call:<canonical-tool> }}` — reference a tool by canonical name. It expands to a
-  short inline instruction (`call <tool>`), and for the three built-in loopkeep tools
-  a usage snippet is appended to the end of the prompt once per tool:
-  - `mcp:loopkeep/ask_human` — block and ask a question via the inbox
-  - `mcp:loopkeep/notify_human` — post a non-blocking notification to the inbox
-  - `mcp:loopkeep/emit_output` — publish structured JSON for downstream workflows
-    (pair with `safe-outputs: emit-output`)
-  Unknown targets are not expanded and the editor flags them as likely typos — the
-  spelling must be the canonical form (`mcp:<server>/<tool>` for MCP tools).
-- `{{ secret:<name> }}` — expands to the reference form `secret:<name>`; the value is
-  **never inlined into the prompt**. Manage values with `lk secret set` /
-  `lk secret list`.
+1. Start from the closest existing workflow — `workflows/examples/` in the loopkeep
+   repository, or the files already in this workspace's `.loopkeep/workflows/`.
+2. `lk run <name>`, then watch it: `lk runs`, `lk inbox`. This works on any workflow
+   file that exists, trusted or not, so the iteration loop needs no approval. Add
+   `manual: {}` to `on:` as well if a person should be able to start it from the
+   desktop app or the Console — that is what puts a Run button on it.
+3. `lk trigger explain <name>` — confirms what registered, which repository a GitHub
+   trigger bound to, and what `me` resolved to. Anything that was refused with a
+   warning shows up here rather than in the run.
+4. Automatic triggers only fire once the workspace is trusted. That is the human's
+   call: show them the policy and let them run `lk trust`.
+5. Iterate with `lk rerun <run_id>` — it reuses the original trigger context, so
+   trigger-shaped bugs reproduce instead of vanishing.
 
-## Authoring flow
+## Chaining workflows
 
-1. Start from the closest existing workflow or example; keep names kebab-case.
-2. Write the prompt as instructions to an agent that cannot ask questions mid-run:
-   state the goal, the exact commands or tools to prefer, hard prohibitions, and how
-   to report (`notify` / `emit-output`), ideally exactly once.
-3. Test by hand first: `lk run <name>`, then `lk runs` and the inbox. Manual runs
-   work regardless of trust.
-4. Automatic triggers fire only once the workspace is trusted (`lk trust`).
-5. Iterate with `lk rerun <run_id>` — it reuses the trigger context, so trigger-shaped
-   bugs reproduce.
+Runs never talk to each other directly. There are three channels:
 
-## Operating notes
+1. **Run output** — the agent calls `emit_output` with JSON; a downstream workflow's
+   `run-completed` trigger filters on it (`if: event.output.severity == "high"`) and
+   receives it as `{{ trigger.output }}`.
+2. **Dispatch** — an agent fires another workflow through `dispatch-workflow`. The
+   target must be named in that output's `allowed` list, and the dispatch is
+   policy-evaluated like any other action.
+3. **The filesystem** — write a file, let a downstream `file-watch` pick it up. Best
+   for multi-stage pipelines, because each stage stays independently runnable.
 
-- `lk disable <workflow>` / `lk enable <workflow>` — toggle automatic triggers per
-  workspace; in-flight and manual runs are unaffected.
-- `lk pause --all` / `lk resume --all` — global stop for trigger-driven runs.
-- Budgets and `depth`: chained workflows (one run's `emit-output` triggering another)
-  are cut off by chain depth and budgets. If a chain "mysteriously" stops, check
-  budgets before suspecting the trigger.
-- GitHub Agentic Workflows interop: `lk export --to-gh-aw <workflow> [--json]` reports compatibility as
-  green/yellow/red. `lk import <gh-aw-file>` writes the file into the workspace as
-  `.loopkeep/workflows/<name>.md`, named after the source file unless `--name <name>`
-  says otherwise, and adds a `manual` trigger so it can always be started by hand. The
-  file's own triggers are kept as written — a trigger that doesn't fire locally is not
-  swapped for `manual`. An existing workflow is an error rather than a silent overwrite;
-  pass `--force` to replace it. It prints the path it wrote, any warnings, and the
-  resulting `on:`.
+Chains carry a depth: a `run-completed` or `dispatch-workflow` firing inherits its
+parent's depth plus one, capped at 5. Deeper firings are refused and recorded. That
+depth limit is the entire loop-prevention model — there is no DAG to configure.
+
+**When a chain mysteriously stops, check budgets and depth before suspecting the
+trigger.** `lk runs` prints `depth=` per run, and a budget refusal is recorded as a
+failed run rather than as silence.
+
+## Operating an existing workflow
+
+- `lk disable <workflow>` / `lk enable <workflow>` — turn its automatic triggers off
+  and on in this workspace. Manual runs and runs in flight are unaffected.
+- `lk pause --all` / `lk resume --all` — global kill switch across every workspace.
+  Independent of trust.
+- `lk untrust` — this workspace's kill switch: every trigger here stops firing until
+  someone runs `lk trust` again.
+- `lk hooks` / `lk hooks add <name>` / `lk hooks rotate <name>` / `lk hooks rm <name>` —
+  the personal webhook URLs `on.webhook` listens to. The URL is the credential and is
+  printed only when it is issued; `lk hooks` lists names and dates, never URLs.
+
+## GitHub Agentic Workflows interop
+
+`lk export --to-gh-aw <workflow> [--json]` translates a workflow to gh-aw and reports
+each key as green (same meaning), yellow (translated, meaning changed), or red (no
+equivalent, feature lost). The workflow can be a name under `.loopkeep/workflows/` or a
+path to a file. Local triggers, local safe-outputs, and everything under `x-loopkeep`
+have no gh-aw equivalent, so expect red and yellow rows for anything loopkeep-specific.
+
+`lk import <gh-aw-file> [--name <name>] [--force]` writes a gh-aw file into the
+workspace as `.loopkeep/workflows/<name>.md`, named after the source file unless
+`--name` says otherwise, and adds a `manual` trigger so it can always be started by
+hand. The file's own triggers are kept as written — a trigger that doesn't fire locally
+is not swapped for `manual`. An existing workflow is an error rather than a silent
+overwrite; `--force` replaces it. It prints the path it wrote, any warnings, and the
+resulting `on:`.
