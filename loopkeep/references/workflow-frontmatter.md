@@ -307,9 +307,9 @@ rules they match as `tool: mcp:notion/create-page`.
 
 ## `x-loopkeep`
 
-Everything loopkeep adds beyond gh-aw nests here. Exactly seven subkeys are
+Everything loopkeep adds beyond gh-aw nests here. Exactly eight subkeys are
 recognized — `engine`, `concurrency`, `budget`, `tags`, `execution_mode`, `mux`,
-`coalesce` — and anything else warns and has no effect. There is no flat form: a
+`coalesce`, `branch_template` — and anything else warns and has no effect. There is no flat form: a
 top-level `x-loopkeep.budget:` key is warned about and ignored, so nest everything
 under one `x-loopkeep:` block.
 
@@ -327,6 +327,7 @@ x-loopkeep:
     daily_tokens: 500000
   tags: [deploy, migration]
   coalesce: 5m # 30s | 5m | 2h — fold remote firings in a window into one run
+  branch_template: "{workflow_name}/{run_id}" # git branch this workflow's runs work on
   execution_mode: attended # auto (default) | headless | attended
   mux: herdr # herdr | tmux | zellij | cmux
 ```
@@ -346,6 +347,13 @@ x-loopkeep:
   their own `coalesce: latest | all`. Leave it off for a workflow that replies to
   whatever triggered it — one run can only answer one thread. An unreadable duration
   falls back to no window, with a warning.
+- **`branch_template`** — names the git branch this workflow's runs work on, overriding
+  `run.branch_template` in `config.yaml`. `{workflow_name}`, `{run_id}` and
+  `{workspace_name}` expand; the default is `{workflow_name}/{run_id}`. A template that
+  cannot produce a branch name falls back to the default, with a line in the daemon log.
+  Omitting `{run_id}` is allowed and useful — a fixed name like `agent-work` grows one
+  branch across runs — but git checks a branch out in one place at a time, so a run that
+  starts while that branch is busy fails and says so.
 
 ### `execution_mode` and `launch`
 
