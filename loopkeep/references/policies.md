@@ -24,7 +24,7 @@ inside its own sandbox is not floored. A bash command trips it only when one of 
 paths appears in a **write position** (a redirect target, or an argument to
 `rm`/`cp`/`mv`/`tee`/`dd`/`sed -i`) — reading or merely mentioning a protected path
 does not. Separately, `ask_human` is floored to `ask-first` and `notify_human` /
-`slack_reply` to `notify`.
+`slack_reply` / `slack_post` to `notify`.
 
 **There is no per-workflow layer.** Scoping a rule to a workflow is a match axis on the
 rule itself (`match: { workflow: [deploy, "release-*"] }`).
@@ -67,6 +67,9 @@ rules:
     reason: "production changes need a human"
 defaults:
   level: notify # the only key `defaults` reads
+delivery: # home and project-local only; system-local time
+  digest: { cron: "0 9 * * *" } # also the default when omitted
+  quiet_hours: ["23:00-07:00"]
 ```
 
 `workflow` and `command` fail closed: if you constrain on them and the action carries
@@ -102,6 +105,30 @@ can be stricter than what `explain` reproduces.
 The rank is deliberately never used for errors, so "exit 0" can't be misread as
 auto-approve when nothing was evaluated. The exit code is computed after the floor
 clamp.
+
+## Delivery, digests, and quiet hours
+
+`delivery` is active only in the home and project-local layers. It changes when and
+where attention is delivered, never the evaluated level. `notify` entries are visible
+in the inbox immediately. A connected desktop receives the live inbox update outside
+quiet hours; `delivery.digest.cron` also schedules a bundled digest notification,
+daily at 09:00 by default. That cron and `quiet_hours` use the daemon machine's
+system-local time; workflow `on.schedule` continues to use UTC.
+
+Every quiet-hours entry must be exactly `HH:MM-HH:MM`, with different start and end
+times. The start is inclusive and the end exclusive; a range may cross midnight, and
+multiple ranges are unioned. Weekdays
+are not supported. An invalid entry is ignored individually and writes a warning to
+the daemon log. Live notify updates inside a quiet window are held, then flushed as
+one ordered batch when it ends. A digest due inside the window is retained and merged
+per workspace until then. `ask-first` is always delivered immediately and does not
+release held notify items early.
+
+When global config names both `notifications.slack.workspace` and
+`notifications.slack.channel`, Slack is an additional informational notification
+channel; both must be present, and omission means desktop-only. Ask-first notices go
+to Slack immediately, while notify items go only in the digest. Approval and denial
+still happen in loopkeep.
 
 ## Tuning flow
 

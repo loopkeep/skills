@@ -67,10 +67,11 @@ failed run rather than as silence.
 
 - `lk disable <workflow>` / `lk enable <workflow>` — turn its automatic triggers off
   and on in this workspace. Manual runs and runs in flight are unaffected.
-- `lk pause --all` / `lk resume --all` — global kill switch across every workspace.
-  Independent of trust.
-- `lk untrust` — this workspace's kill switch: every trigger here stops firing until
-  someone runs `lk trust` again.
+- `lk pause --all` / `lk resume --all` — persisted global trigger gate across every
+  workspace. Future automatic firings stop; manual and in-flight runs continue. It is
+  independent of trust and does not kill the daemon, terminals, or agent sessions.
+- `lk untrust` — this workspace's trigger gate: every automatic trigger here stops
+  firing until someone runs `lk trust` again.
 - `lk hooks` / `lk hooks add <name>` / `lk hooks rotate <name>` / `lk hooks rm <name>` —
   the personal webhook URLs `on.webhook` listens to. The URL is the credential and is
   printed only when it is issued; `lk hooks` lists names and dates, never URLs.

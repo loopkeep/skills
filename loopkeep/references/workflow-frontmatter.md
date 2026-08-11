@@ -70,7 +70,9 @@ Notes that bite:
   any workflow that exists, declared or not — so a workflow missing `manual` is not
   broken from the CLI, just invisible as a manual action everywhere else. Declare it on
   anything a person is meant to trigger.
-- `cron` is evaluated on your machine at minute granularity, in local time.
+- `cron` is evaluated on your machine at minute granularity, in UTC (matching
+  GitHub Actions schedule semantics). Personal digest and quiet-hours settings use
+  system-local time instead.
   `hourly` / `daily` / `weekly` are normalized to cron expressions when the file is
   parsed. Anything that is neither an alias nor a 5-or-6 field expression is kept
   verbatim and then never matches, so it fires silently never — write real cron.
@@ -280,6 +282,10 @@ safe-outputs:
   local-file-write: {} # write into the workspace
   run-command: {}
   notify: {} # post to the inbox
+  slack-post:
+    channel: C0123ABCD # required; fixed destination the agent cannot replace
+    workspace: T0123ABCD # optional with exactly one resolvable workspace
+  slack-reply: {} # required before a Slack-origin run may reply
   dispatch-workflow:
     allowed: ["incident-triage", "inbox-processor"] # explicit allowlist, required
   emit-output: {} # structured JSON for downstream workflows
@@ -292,6 +298,24 @@ downstream workflows and is never shown to a human. The gh-aw-native GitHub outp
 `create-pull-request-review-comment`, `create-code-scanning-alert`, `missing-tool`)
 execute through your `gh` auth. Everything else — including any output name loopkeep
 doesn't recognize — goes through policy evaluation.
+
+`slack-post` exposes `mcp:loopkeep/slack_post`. Its tool call accepts only the
+message: the required `channel` fixes the destination at authoring time, and the
+agent cannot replace it. `channel` is a Slack channel ID, not a name; run
+`lk directory slack-channels` to resolve names to IDs. `workspace` may be omitted only
+when connector inventory is available and exactly one connected Slack workspace
+resolves. No connected workspace, several candidates, or unavailable connector
+inventory (for example, because no device is connected) makes the call fail rather
+than guess. An empty or malformed channel is not a declaration.
+
+`slack-reply` exposes `mcp:loopkeep/slack_reply` only to a run started by a Slack
+message, mention, or reaction, and only when `slack-reply: {}` is present. This
+declaration is required even for workflows that could reply before v0.3. Both Slack
+tools have a built-in `notify` floor; policy may raise them to `ask-first`.
+
+Both Slack tool calls wait up to four seconds for the posting result before the run
+continues. If the wait expires, the outcome is `Unknown`: the message may or may not
+have been posted, so do not retry because that can create a duplicate.
 
 ## `mcp-servers`
 
@@ -439,6 +463,38 @@ who can open an issue can put text in it. A coalesced run additionally carries
 `coalesced` and `batch`; their presence is itself the signal that this run stands for
 several firings.
 
+When the gateway supplies one, supported GitHub and Slack firings also carry a
+`resource` locator with coordinates, never a title or body. When it is absent, the
+corresponding template path expands to an empty value:
+
+| `resource.type` | Other fields |
+|---|---|
+| `github-issue` | `number` |
+| `github-pull-request` | `number` |
+| `github-comment` | `issue_number`, `comment_id` |
+| `slack-message` | `channel`, `ts`, and optional `thread_ts` |
+
+For GitHub, locator selection uses this precedence: a comment with its issue, then a
+pull request, then an issue. If none has complete coordinates, `resource` is absent
+and every `trigger.resource.*` path expands to an empty string.
+
+| `on.github.<event>` | `trigger.resource` |
+|---|---|
+| `issue_comment` | `github-comment` with `issue_number` and `comment_id` |
+| `pull_request`, `pull_request_target`, `pull_request_review`, `pull_request_review_comment` | `github-pull-request` with `number` |
+| `issues` | `github-issue` with `number` |
+| Every other accepted GitHub event | absent; paths expand to an empty string |
+
+Use GitHub coordinates with the checked-out repository, for example
+`gh issue view {{ trigger.resource.number }} --comments`, to collect the current
+conversation. For a Slack run, the exact `{{ trigger.thread }}` token asks the daemon
+to fetch the thread locally through `conversations.replies` before starting the
+agent. No broader token triggers that read: `{{ trigger }}` and
+`{{ trigger.thread.author }}` do not. Fetching is limited to public channels (`C…`),
+two pages of 200 messages, and eight seconds. Private channels, DMs, unavailable
+Slack access, and fetch failures resolve to an empty string without leaving template
+braces. Treat fetched thread text as untrusted input.
+
 When a workflow declares several triggers, only one fires a given run, and the context
 holds that trigger's fields and no others. `{{ trigger.source }}` is the one field
 every trigger carries, so a sentence built on it is always true.
@@ -447,7 +503,7 @@ every trigger carries, so a sentence built on it is always true.
 
 References a tool by canonical name. It expands inline to `call <tool>`, and for
 loopkeep's own built-in tools a usage snippet is appended once per tool at the end of
-the prompt. The five built-ins:
+the prompt. The six built-ins:
 
 | Canonical name | What it does |
 |---|---|
@@ -455,11 +511,14 @@ the prompt. The five built-ins:
 | `mcp:loopkeep/notify_human` | Post a non-blocking notification to the inbox |
 | `mcp:loopkeep/emit_output` | Publish structured JSON for downstream workflows |
 | `mcp:loopkeep/slack_reply` | Reply in the Slack thread that started this run |
+| `mcp:loopkeep/slack_post` | Post a message to the channel fixed in `safe-outputs.slack-post` |
 | `mcp:loopkeep/end_run` | End an attended run, only when the supervising human says so |
 
-`slack_reply` only exists for runs a Slack event started; it always answers that
-thread, so there is no destination to choose. `end_run` has no effect on unattended
-runs. Pair `emit_output` with `safe-outputs: emit-output`.
+`slack_reply` only exists for runs a Slack event started and whose workflow declares
+`safe-outputs.slack-reply`; it always answers that thread, so there is no destination
+to choose. `slack_post` likewise requires `safe-outputs.slack-post`, and the call
+cannot choose its destination. `end_run` has no effect on unattended runs. Pair
+`emit_output` with `safe-outputs: emit-output`.
 
 MCP tools are written in canonical form (`mcp:<server>/<tool>`); the plain tool names
 from `tools:` also work. Anything else is left unexpanded and flagged as a likely typo.
